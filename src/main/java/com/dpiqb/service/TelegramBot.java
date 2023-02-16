@@ -1,16 +1,21 @@
 package com.dpiqb.service;
 
 import com.dpiqb.config.BotConfig;
+import com.dpiqb.model.User;
+import com.dpiqb.model.UserRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.commands.SetMyCommands;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.objects.Chat;
+import org.telegram.telegrambots.meta.api.objects.Message;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.commands.BotCommand;
 import org.telegram.telegrambots.meta.api.objects.commands.scope.BotCommandScopeDefault;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
+import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -19,10 +24,12 @@ import java.util.List;
 public class TelegramBot extends TelegramLongPollingBot {
   private static final String HELP_TEXT = "This is help";
   private final BotConfig botConfig;
+  private final UserRepository userRepository;
 
-  public TelegramBot(BotConfig botConfig) {
+  public TelegramBot(BotConfig botConfig, UserRepository userRepository) {
     super(botConfig.getToken());
     this.botConfig = botConfig;
+    this.userRepository = userRepository;
     List<BotCommand> listOfCommands = new ArrayList<>();
     listOfCommands.add(new BotCommand("/start", "Start dialog"));
     listOfCommands.add(new BotCommand("/mydata", "Get your data"));
@@ -43,6 +50,8 @@ public class TelegramBot extends TelegramLongPollingBot {
       long chatId = update.getMessage().getChatId();
       switch (messageText){
         case "/start":
+          registerUser(update.getMessage());
+//          System.out.println(update.getMessage());
           startCommandReceived(chatId, update.getMessage().getChat().getFirstName());
           break;
         case "/help":
@@ -52,6 +61,24 @@ public class TelegramBot extends TelegramLongPollingBot {
       }
     }
   }
+
+  private void registerUser(Message message) {
+    if(userRepository.findById(message.getChatId()).isEmpty()){
+      Long chatId = message.getChatId();
+      Chat chat = message.getChat();
+
+      User user = new User();
+      user.setChatId(chatId);
+      user.setFirstName(chat.getFirstName());
+      user.setLastName(chat.getLastName());
+      user.setUserName(chat.getUserName());
+      user.setRegisterAt(new Timestamp(System.currentTimeMillis()));
+
+      userRepository.save(user);
+      log.info("User saved : " + user);
+    }
+  }
+
   private void startCommandReceived(long chatId, String name){
     String answer = "Hello, "+name+", nice to meet you!";
     log.info("Replied to user " + name);

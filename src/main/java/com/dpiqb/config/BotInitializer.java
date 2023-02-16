@@ -1,5 +1,6 @@
 package com.dpiqb.config;
 
+import com.dpiqb.model.UserRepository;
 import com.dpiqb.service.TelegramBot;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
