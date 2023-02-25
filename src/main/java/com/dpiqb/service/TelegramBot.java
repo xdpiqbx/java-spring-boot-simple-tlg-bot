@@ -3,6 +3,7 @@ package com.dpiqb.service;
 import com.dpiqb.config.BotConfig;
 import com.dpiqb.model.User;
 import com.dpiqb.model.UserRepository;
+import com.vdurmont.emoji.EmojiParser;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
@@ -80,7 +81,8 @@ public class TelegramBot extends TelegramLongPollingBot {
   }
 
   private void startCommandReceived(long chatId, String name){
-    String answer = "Hello, "+name+", nice to meet you!";
+//    String answer = "Hello, "+name+", nice to meet you!";
+    String answer = EmojiParser.parseToUnicode("Hello, "+name+", nice to meet you! " + "😊");
     log.info("Replied to user " + name);
     sendMessage(chatId, answer);
   }
