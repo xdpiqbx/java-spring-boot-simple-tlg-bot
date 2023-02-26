@@ -1,10 +1,15 @@
 package com.dpiqb.service;
 
+import com.dpiqb.config.BotCommands;
 import com.dpiqb.config.BotConfig;
+import com.dpiqb.model.Ads;
+import com.dpiqb.model.AdsRepository;
 import com.dpiqb.model.User;
 import com.dpiqb.model.UserRepository;
 import com.vdurmont.emoji.EmojiParser;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.commands.SetMyCommands;
@@ -13,7 +18,6 @@ import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageTe
 import org.telegram.telegrambots.meta.api.objects.Chat;
 import org.telegram.telegrambots.meta.api.objects.Message;
 import org.telegram.telegrambots.meta.api.objects.Update;
-import org.telegram.telegrambots.meta.api.objects.commands.BotCommand;
 import org.telegram.telegrambots.meta.api.objects.commands.scope.BotCommandScopeDefault;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboardMarkup;
@@ -31,20 +35,23 @@ public class TelegramBot extends TelegramLongPollingBot {
   private static final String HELP_TEXT = "This is help";
   private final BotConfig botConfig;
   private final UserRepository userRepository;
-
-  public TelegramBot(BotConfig botConfig, UserRepository userRepository) {
+  private final AdsRepository adsRepository;
+  public TelegramBot(BotConfig botConfig, UserRepository userRepository, AdsRepository adsRepository) {
     super(botConfig.getToken());
     this.botConfig = botConfig;
     this.userRepository = userRepository;
-    List<BotCommand> listOfCommands = new ArrayList<>();
-    listOfCommands.add(new BotCommand("/start", "Start dialog"));
-    listOfCommands.add(new BotCommand("/register", "Register?"));
-    listOfCommands.add(new BotCommand("/mydata", "Get your data"));
-    listOfCommands.add(new BotCommand("/deletedata", "Delete your data"));
-    listOfCommands.add(new BotCommand("/help", "Info how to use this bot"));
-    listOfCommands.add(new BotCommand("/settings", "Set your preferences"));
+    this.adsRepository = adsRepository;
+  }
+  @PostConstruct
+  private void postConstruct() {
     try{
-      this.execute(new SetMyCommands(listOfCommands, new BotCommandScopeDefault(), null));
+      this.execute(
+          new SetMyCommands(
+              BotCommands.listOfCommands(),
+              new BotCommandScopeDefault(),
+              null
+          )
+      );
     } catch (TelegramApiException e) {
       log.error("Error setting bot's command list: " + e.getMessage());
     }
@@ -55,48 +62,42 @@ public class TelegramBot extends TelegramLongPollingBot {
     if(update.hasMessage() && update.getMessage().hasText()){
       String messageText = update.getMessage().getText();
       long chatId = update.getMessage().getChatId();
+
+      if(messageText.contains("/send") && botConfig.getOwnerId() == chatId){
+        String command = EmojiParser.parseToUnicode(messageText.substring(0, messageText.indexOf(" ")));
+        String textToSend = EmojiParser.parseToUnicode(messageText.substring(messageText.indexOf(" ")));
+
+        Iterable<User> users = userRepository.findAll();
+        for (User user : users) {
+          sendMessage(user.getChatId(), textToSend);
+        }
+        return;
+      }
+
       switch (messageText) {
         case "/start" -> {
           registerUser(update.getMessage());
-//          System.out.println(update.getMessage());
           startCommandReceived(chatId, update.getMessage().getChat().getFirstName());
         }
-        case "/help" -> sendMessage(chatId, HELP_TEXT);
+        case "/help" -> prepareAndSendMessage(chatId, HELP_TEXT);
         case "/register" -> register(chatId);
-        default -> sendMessage(chatId, "Sorry, command was not recognized");
+        default -> prepareAndSendMessage(chatId, "Sorry, command was not recognized");
       }
+
     } else if (update.hasCallbackQuery()) {
       Integer messageId = update.getCallbackQuery().getMessage().getMessageId();
       Long chatId = update.getCallbackQuery().getMessage().getChatId();
 
       String data = update.getCallbackQuery().getData();
 
-      switch (data){
-        case "YES_BUTTON" -> {
+      switch (Const.valueOf(data)){
+        case YES_BUTTON -> {
           String text = "You press YES button";
-          EditMessageText editMessageText = new EditMessageText();
-          editMessageText.setMessageId(messageId);
-          editMessageText.setChatId(chatId);
-          editMessageText.setText(text);
-
-          try {
-            execute(editMessageText);
-          }catch (TelegramApiException e){
-            log.error("Error occured:" + e.getMessage());
-          }
+          executeEditMessage(messageId, chatId, text);
         }
-        case "NO_BUTTON" -> {
+        case NO_BUTTON -> {
           String text = "You press NO button";
-          EditMessageText editMessageText = new EditMessageText();
-          editMessageText.setMessageId(messageId);
-          editMessageText.setChatId(chatId);
-          editMessageText.setText(text);
-
-          try {
-            execute(editMessageText);
-          }catch (TelegramApiException e){
-            log.error("Error occured:" + e.getMessage());
-          }
+          executeEditMessage(messageId, chatId, text);
         }
       }
 
@@ -113,11 +114,11 @@ public class TelegramBot extends TelegramLongPollingBot {
 
     InlineKeyboardButton yesButton = new InlineKeyboardButton();
       yesButton.setText("Yes");
-      yesButton.setCallbackData("YES_BUTTON");
+      yesButton.setCallbackData(Const.YES_BUTTON.name());
 
     InlineKeyboardButton noButton = new InlineKeyboardButton();
       noButton.setText("No");
-      noButton.setCallbackData("NO_BUTTON");
+      noButton.setCallbackData(Const.NO_BUTTON.name());
 
     buttonsRow1.add(yesButton);
     buttonsRow1.add(noButton);
@@ -126,11 +127,7 @@ public class TelegramBot extends TelegramLongPollingBot {
     inlineKeyboardMarkup.setKeyboard(keyboard);
     message.setReplyMarkup(inlineKeyboardMarkup);
 
-    try {
-      execute(message);
-    }catch (TelegramApiException e){
-      log.error("Error occured:" + e.getMessage());
-    }
+    executeMessage(message);
   }
   private void registerUser(Message message) {
     if(userRepository.findById(message.getChatId()).isEmpty()){
@@ -153,7 +150,7 @@ public class TelegramBot extends TelegramLongPollingBot {
 //    String answer = "Hello, "+name+", nice to meet you!";
     String answer = EmojiParser.parseToUnicode("Hello, "+name+", nice to meet you! " + "😊");
     log.info("Replied to user " + name);
-    sendMessage(chatId, answer);
+    prepareAndSendMessage(chatId, answer);
   }
   private void sendMessage(long chatId, String messageToSend){
     SendMessage sendMessage = new SendMessage();
@@ -176,15 +173,47 @@ public class TelegramBot extends TelegramLongPollingBot {
     replyKeyboardMarkup.setKeyboard(keyboardRows);
     sendMessage.setReplyMarkup(replyKeyboardMarkup);
 
-    try {
-      execute(sendMessage);
-    }catch (TelegramApiException e){
-      log.error("Error occured:" + e.getMessage());
-    }
+    executeMessage(sendMessage);
   }
 
   @Override
   public String getBotUsername() {
     return botConfig.getBotName();
+  }
+
+  private void executeEditMessage(int messageId, long chatId, String text){
+    EditMessageText editMessageText = new EditMessageText();
+    editMessageText.setMessageId(messageId);
+    editMessageText.setChatId(chatId);
+    editMessageText.setText(text);
+    try {
+      execute(editMessageText);
+    }catch (TelegramApiException e){
+      log.error("Error occured:" + e.getMessage());
+    }
+  }
+  public void executeMessage(SendMessage message){
+    try {
+      execute(message);
+    }catch (TelegramApiException e){
+      log.error("Error occured:" + e.getMessage());
+    }
+  }
+  @Scheduled(cron = "${cron.scheduler}")
+  private void sendAds(){
+    Iterable<Ads> ads = adsRepository.findAll();
+    Iterable<User> users = userRepository.findAll();
+    ads.forEach(ad -> {
+      users.forEach(user -> {
+            prepareAndSendMessage(user.getChatId(), ad.getAd());
+          }
+      );
+    });
+  }
+  public void prepareAndSendMessage(long chatId, String messageToSend){
+    SendMessage sendMessage = new SendMessage();
+    sendMessage.setChatId(String.valueOf(chatId));
+    sendMessage.setText(messageToSend);
+    executeMessage(sendMessage);
   }
 }
